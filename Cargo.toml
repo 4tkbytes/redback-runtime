@@ -7,3 +7,12 @@ repository.workspace = true
 readme = "README.md"
 
 [dependencies]
+anyhow.workspace = true
+app_dirs2.workspace = true
+bincode.workspace = true
+log.workspace = true
+log-once.workspace = true
+env_logger.workspace = true
+hecs.workspace = true
+dropbear-engine = { path = "../dropbear-engine" }
+eucalyptus = { path = "../eucalyptus" }
