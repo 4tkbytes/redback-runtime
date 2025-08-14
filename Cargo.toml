@@ -16,3 +16,4 @@ env_logger.workspace = true
 hecs.workspace = true
 dropbear-engine = { path = "../dropbear-engine" }
 eucalyptus = { path = "../eucalyptus" }
+egui.workspace = true

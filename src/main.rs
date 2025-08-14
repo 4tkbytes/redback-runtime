@@ -1,9 +1,18 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
-use dropbear_engine::{entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::Graphics, input::{Controller, Keyboard, Mouse}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window}, WindowConfiguration};
-use eucalyptus::states::{RuntimeData, SceneConfig};
+use dropbear_engine::{camera::Camera, entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window}, WindowConfiguration};
+use egui::Image;
+use eucalyptus::{camera::CameraType, scripting::ScriptManager, states::{RuntimeData, SceneConfig, ScriptComponent}};
+use eucalyptus::camera::CameraManager;
 
 fn main() -> anyhow::Result<()> {    
+    if std::env::var("RUST_LOG").is_err() {
+        unsafe {
+            std::env::set_var("RUST_LOG", "info,redback_runtime=debug");
+        }
+    }
+    let _ = env_logger::try_init();
+
     // ensure that {project_name}.eupak exists in same dir as runtime
     let current_exe = std::env::current_exe()?;
     let file_name = current_exe
@@ -21,13 +30,13 @@ fn main() -> anyhow::Result<()> {
         return Err(anyhow::anyhow!("{}.eupak was not found at {}, which is required to start the game.", project_name, init_eupak_path.display()));
     }
 
-    log::info!("Loading runtime data from: {}", init_eupak_path.display()); // Debug print
+    println!("Loading runtime data from: {}", init_eupak_path.display());
 
     // decode that content
     let bytes = std::fs::read(&init_eupak_path)?;
     let (content, _): (RuntimeData, usize) = bincode::decode_from_slice(&bytes, bincode::config::standard())?;
     
-    log::debug!("Loaded {} scenes", content.scene_data.len());
+    println!("Loaded {} scenes", content.scene_data.len());
 
     let config = WindowConfiguration {
         windowed_mode: dropbear_engine::WindowedModes::Maximised,
@@ -43,71 +52,37 @@ fn main() -> anyhow::Result<()> {
 }
 
 struct RuntimeScene {
-    scene_data: Vec<SceneConfig>,
+    scene_data: HashMap<String, SceneConfig>,
     scripts: HashMap<String, String>,
-    current_scene_index: usize,
-    loaded_world: Option<hecs::World>,
-    camera_manager: Option<eucalyptus::camera::CameraManager>,
-    script_manager: Option<eucalyptus::scripting::ScriptManager>,
+    current_scene_name: String,
+    world: hecs::World,
     scene_command: SceneCommand,
     input_state: eucalyptus::scripting::input::InputState,
     render_pipeline: Option<RenderPipeline>,
     window: Option<Arc<Window>>,
     is_cursor_locked: bool,
+    camera: Camera,
 }
 
 impl RuntimeScene {
     fn new(runtime_data: RuntimeData) -> Self {
+        let mut scene_data = HashMap::new();
+        for data in &runtime_data.scene_data {
+            scene_data.insert(data.scene_name.clone(), data.clone());
+        }
+
         Self {
-            scene_data: runtime_data.scene_data,
+            scene_data,
             scripts: runtime_data.scripts,
-            current_scene_index: 0,
-            loaded_world: None,
-            camera_manager: None,
-            script_manager: None,
+            current_scene_name: String::new(),
+            world: hecs::World::new(),
             scene_command: SceneCommand::None,
             input_state: eucalyptus::scripting::input::InputState::new(),
             render_pipeline: None,
             window: None,
             is_cursor_locked: true,
+            camera: Camera::default(),
         }
-    }
-
-    fn load_scene(&mut self, scene_index: usize, graphics: &Graphics) -> anyhow::Result<()> {
-        if scene_index >= self.scene_data.len() {
-            return Err(anyhow::anyhow!("Scene index {} out of bounds", scene_index));
-        }
-        let scene = &self.scene_data[scene_index];
-        
-        let mut world = hecs::World::new();
-        scene.load_into_world(&mut world, graphics)?;
-        
-        let mut camera_manager = eucalyptus::camera::CameraManager::new();
-        scene.load_cameras_into_manager(&mut camera_manager, graphics, &world)?;
-        camera_manager.set_active(eucalyptus::camera::CameraType::Player);
-        
-        let script_manager = eucalyptus::scripting::ScriptManager::new();
-        
-        for (script_name, script_content) in &self.scripts {
-            log::info!("Script available: {}", script_name);
-        }
-        
-        self.loaded_world = Some(world);
-        self.camera_manager = Some(camera_manager);
-        self.script_manager = Some(script_manager);
-        self.current_scene_index = scene_index;
-        
-        log::info!("Loaded scene: {}", scene.scene_name);
-        Ok(())
-    }
-
-    fn switch_scene(&mut self, scene_name: &str, graphics: &Graphics) -> anyhow::Result<()> {
-        if let Some(index) = self.scene_data.iter().position(|s| s.scene_name == scene_name) {
-            self.load_scene(index, graphics)?;
-        } else {
-            return Err(anyhow::anyhow!("Scene '{}' not found", scene_name));
-        }
-        Ok(())
     }
 }
 
@@ -132,68 +107,156 @@ fn setup_from_runtime_data(
 
 impl Scene for RuntimeScene {
     fn load(&mut self, graphics: &mut Graphics) {
-        todo!()
+        let shader = Shader::new(
+            graphics,
+            include_str!("../../eucalyptus/src/shader.wgsl"),
+            Some("default"),
+        );
+
+        // let horse_model =
+        //     AdoptedEntity::new(graphics, "models/low_poly_horse.glb", Some("horse")).unwrap();
+
+        // self.world.spawn((horse_model, Transform::default()));
+
+        let camera = Camera::predetermined(graphics);
+
+        let pipeline = graphics.create_render_pipline(
+            &shader,
+            vec![&graphics.state.texture_bind_layout.clone(), camera.layout()],
+        );
+
+        self.camera = camera;
+        self.window = Some(graphics.state.window.clone());
+
+        // ensure that this is the last line
+        self.render_pipeline = Some(pipeline);
     }
 
     fn update(&mut self, dt: f32, graphics: &mut Graphics) {
-        todo!()
+        for key in &self.input_state.pressed_keys {
+            match key {
+                KeyCode::KeyW => self.camera.move_forwards(),
+                KeyCode::KeyA => self.camera.move_left(),
+                KeyCode::KeyD => self.camera.move_right(),
+                KeyCode::KeyS => self.camera.move_back(),
+                KeyCode::ShiftLeft => self.camera.move_down(),
+                KeyCode::Space => self.camera.move_up(),
+                _ => {}
+            }
+        }
+
+        if !self.is_cursor_locked {
+            self.window.as_mut().unwrap().set_cursor_visible(true);
+        }
+
+        // let query = self.world.query_mut::<(&mut AdoptedEntity, &Transform)>();
+        // for (_, (entity, transform)) in query {
+        //     entity.update(&graphics, transform);
+        // }
+
+        self.camera.update(graphics);
     }
 
     fn render(&mut self, graphics: &mut Graphics) {
-        todo!()
+        let color = Color {
+            r: 0.1,
+            g: 0.2,
+            b: 0.3,
+            a: 1.0,
+        };
+
+        let texture_id = graphics.state.texture_id.clone();
+        let (display_width, display_height) = graphics.screen_size;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new())
+            .show(graphics.get_egui_context(), |ui| {
+                let rect = ui.max_rect();
+                ui.put(
+                    rect,
+                    egui::Image::new((texture_id, [display_width, display_height].into()))
+                        .fit_to_exact_size([display_width, display_height].into()),
+                );
+            });
+        
+        // ui.scope_builder(egui::UiBuilder::new().max_rect(image_rect), |ui| {
+        //             ui.add_sized(
+        //                 [display_width, display_height],
+        //                 egui::Image::new((
+        //                     self.view,
+        //                     [display_width, display_height].into(),
+        //                 ))
+        //                 .fit_to_exact_size([display_width, display_height].into())
+        //             )
+        //         });
+
+        if let Some(pipeline) = &self.render_pipeline {
+            {
+                // let mut query = self.world.query::<(&AdoptedEntity, &Transform)>();
+                let mut render_pass = graphics.clear_colour(color);
+                render_pass.set_pipeline(pipeline);
+
+                // for (_, (entity, _)) in query.iter() {
+                //     entity.render(&mut render_pass, &self.camera);
+                // }
+            }
+        }
+
+        self.window = Some(graphics.state.window.clone());
     }
 
-    fn exit(&mut self, event_loop: &ActiveEventLoop) {
-        todo!()
+
+    fn exit(&mut self, _event_loop: &ActiveEventLoop) {
+    }
+
+    fn run_command(&mut self) -> SceneCommand {
+        std::mem::replace(&mut self.scene_command, SceneCommand::None)
     }
 }
 
 impl Keyboard for RuntimeScene {
-    fn key_down(&mut self, key: KeyCode, event_loop: &ActiveEventLoop) {
-        todo!()
+    fn key_down(&mut self, key: KeyCode, _event_loop: &ActiveEventLoop) {        
+        match key {
+            KeyCode::Escape => {
+                self.scene_command = SceneCommand::Quit;
+            }
+            _ => {
+                self.input_state.pressed_keys.insert(key);
+            }
+        }
     }
 
-    fn key_up(&mut self, key: KeyCode, event_loop: &ActiveEventLoop) {
-        todo!()
+    fn key_up(&mut self, key: KeyCode, _event_loop: &ActiveEventLoop) {
+        self.input_state.pressed_keys.remove(&key);
     }
 }
 
 impl Mouse for RuntimeScene {
-    fn mouse_move(&mut self, position: PhysicalPosition<f64>) {
-        todo!()
+    fn mouse_move(&mut self, _position: PhysicalPosition<f64>) {
     }
 
-    fn mouse_down(&mut self, button: MouseButton) {
-        todo!()
+    fn mouse_down(&mut self, _button: MouseButton) {
     }
 
-    fn mouse_up(&mut self, button: MouseButton) {
-        todo!()
+    fn mouse_up(&mut self, _button: MouseButton) {
     }
 }
 
 impl Controller for RuntimeScene {
-    fn button_down(&mut self, button: dropbear_engine::gilrs::Button, id: dropbear_engine::gilrs::GamepadId) {
-        todo!()
+    fn button_down(&mut self, _button: dropbear_engine::gilrs::Button, _id: dropbear_engine::gilrs::GamepadId) {
     }
 
-    fn button_up(&mut self, button: dropbear_engine::gilrs::Button, id: dropbear_engine::gilrs::GamepadId) {
-        todo!()
+    fn button_up(&mut self, _button: dropbear_engine::gilrs::Button, _id: dropbear_engine::gilrs::GamepadId) {
     }
 
-    fn left_stick_changed(&mut self, x: f32, y: f32, id: dropbear_engine::gilrs::GamepadId) {
-        todo!()
+    fn left_stick_changed(&mut self, _x: f32, _y: f32, _id: dropbear_engine::gilrs::GamepadId) {
     }
 
-    fn right_stick_changed(&mut self, x: f32, y: f32, id: dropbear_engine::gilrs::GamepadId) {
-        todo!()
+    fn right_stick_changed(&mut self, _x: f32, _y: f32, _id: dropbear_engine::gilrs::GamepadId) {
     }
 
-    fn on_connect(&mut self, id: dropbear_engine::gilrs::GamepadId) {
-        todo!()
+    fn on_connect(&mut self, _id: dropbear_engine::gilrs::GamepadId) {
     }
 
-    fn on_disconnect(&mut self, id: dropbear_engine::gilrs::GamepadId) {
-        todo!()
+    fn on_disconnect(&mut self, _id: dropbear_engine::gilrs::GamepadId) {
     }
 }
