@@ -13,7 +13,7 @@ bincode = { version = "2.0", features = ["serde"] }
 log = "0.4"
 log-once = "0.4"
 env_logger = "0.11"
-hecs.workspace = true
+hecs = { version = "0.10", features = ["serde"] }
 # dropbear-engine = { git = "https://github.com/4tkbytes/dropbear" }
 # eucalyptus = { git = "https://github.com/4tkbytes/dropbear" }
 dropbear-engine = { path = "../dropbear-engine" }
