@@ -1,19 +1,21 @@
 [package]
 name = "redback-runtime"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "0.1.2"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/4tkbytes/dropbear-engine"
 readme = "README.md"
 
 [dependencies]
-anyhow.workspace = true
-app_dirs2.workspace = true
-bincode.workspace = true
-log.workspace = true
-log-once.workspace = true
-env_logger.workspace = true
+anyhow = { version = "1.0", features = ["backtrace"] }
+app_dirs2 = "2.5"
+bincode = { version = "2.0", features = ["serde"] }
+log = "0.4"
+log-once = "0.4"
+env_logger = "0.11"
 hecs.workspace = true
+# dropbear-engine = { git = "https://github.com/4tkbytes/dropbear" }
+# eucalyptus = { git = "https://github.com/4tkbytes/dropbear" }
 dropbear-engine = { path = "../dropbear-engine" }
-eucalyptus = { path = "../eucalyptus" }
-egui.workspace = true
+eucalyptus = { path = "../eucalyptus", features = ["data-only"] }
+egui = "0.32"
