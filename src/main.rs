@@ -3,7 +3,7 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use dropbear_engine::{camera::Camera, entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window}, WindowConfiguration};
-use eucalyptus::{camera::{CameraType, CameraManager}, scripting::{ScriptManager, input::InputState}, states::{RuntimeData, SceneConfig, ScriptComponent}};
+use eucalyptus::{camera::CameraManager, scripting::{ScriptManager, input::InputState}, states::{RuntimeData, SceneConfig, ScriptComponent}};
 
 #[cfg(target_os = "android")]
 #[no_mangle]
@@ -79,7 +79,6 @@ fn run() -> anyhow::Result<()> {
 
 struct RuntimeScene {
     scene_data: HashMap<String, SceneConfig>,
-    scripts: HashMap<String, String>,
     current_scene_name: String,
     world: hecs::World,
     camera_manager: CameraManager,
@@ -88,7 +87,6 @@ struct RuntimeScene {
     input_state: InputState,
     render_pipeline: Option<RenderPipeline>,
     window: Option<Arc<Window>>,
-    is_cursor_locked: bool,
 }
 
 impl RuntimeScene {
@@ -100,7 +98,6 @@ impl RuntimeScene {
 
         Self {
             scene_data,
-            scripts: runtime_data.scripts,
             current_scene_name: String::new(),
             world: hecs::World::new(),
             camera_manager: CameraManager::new(),
@@ -109,97 +106,40 @@ impl RuntimeScene {
             input_state: InputState::new(),
             render_pipeline: None,
             window: None,
-            is_cursor_locked: true,
         }
     }
 
-    fn load_scene(&mut self, graphics: &mut Graphics, scene_name: String) -> anyhow::Result<()> {
-        let scene_config = self.scene_data.get(&scene_name)
-            .ok_or_else(|| anyhow::anyhow!("Scene '{}' not found", scene_name))?
-            .clone();
+    fn load_scene(&mut self, graphics: &mut Graphics, scene_name: impl Into::<String>) -> anyhow::Result<()> {
+        let scene_name: String = scene_name.into();
 
-        log::info!("Loading scene: {}", scene_name);
-        
         self.world.clear();
         self.camera_manager.clear_cameras();
+
+        let scene = self.scene_data.get(&scene_name).ok_or_else(|| anyhow::anyhow!("Unable to fetch scene config: Returned \"None\""))?;
+
+        scene.load_into_world(&mut self.world, graphics)?;
+        scene.load_cameras_into_manager(&mut self.camera_manager, graphics,&mut self.world)?;
+
+        let mut script_entities: Vec<(hecs::Entity, ScriptComponent)> = Vec::new();
+        for (entity_id, script) in self.world.query::<&ScriptComponent>().iter() {
+            script_entities.push((entity_id, script.clone()));
+        }
+
+        for (entity_id, script) in script_entities {
+            match self.script_manager.load_script(&script.path) {
+                Ok(script_name) => {
+                    if let Err(e) = self.script_manager.init_entity_script(entity_id, &script_name, &mut self.world, &self.input_state) {
+                        log::warn!("Failed to initialise script '{}' for entity {:?}: {}", script.name, entity_id, e);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to load script '{}': {}", script.name, e);
+                }
+            }
+        }
         
-        for entity_config in &scene_config.entities {
-            log::debug!("Loading entity: {}", entity_config.label);
-
-            let adopted = AdoptedEntity::new(
-                graphics,
-                &entity_config.model_path,
-                Some(&entity_config.label),
-            )?;
-
-            let transform = entity_config.transform;
-            let properties = entity_config.properties.clone();
-
-            if let Some(script_config) = &entity_config.script {
-                let script = ScriptComponent {
-                    name: script_config.name.clone(),
-                    path: script_config.path.clone(),
-                };
-                self.world.spawn((adopted, transform, properties, script));
-            } else {
-                self.world.spawn((adopted, transform, properties));
-            }
-        }
-
-        if let Err(e) = scene_config.load_cameras_into_manager(&mut self.camera_manager, graphics, &self.world) {
-            log::warn!("Failed to load cameras from scene config: {}", e);
-            
-            let debug_camera = Camera::predetermined(graphics);
-            let debug_controller = Box::new(eucalyptus::camera::DebugCameraController::new());
-            self.camera_manager.add_camera(CameraType::Debug, debug_camera, debug_controller);
-            self.camera_manager.set_active(CameraType::Debug);
-            log::info!("Created fallback debug camera");
-        } else {
-            if self.camera_manager.get_camera(&CameraType::Player).is_some() {
-                log::info!("Setting Player camera as active");
-                self.camera_manager.set_active(CameraType::Player);
-            } else if self.camera_manager.get_camera(&CameraType::Debug).is_some() {
-                log::info!("Setting Debug camera as active");
-                self.camera_manager.set_active(CameraType::Debug);
-            }
-        }
-
-        let script_entities: Vec<_> = self.world.query::<&ScriptComponent>().iter()
-            .map(|(entity_id, script)| (entity_id, script.name.clone()))
-            .collect();
-
-        for (entity_id, script_name) in script_entities {
-            if let Some(script_content) = self.scripts.get(&script_name) {
-                if let Err(e) = self.script_manager.load_script_from_source(&script_name, script_content) {
-                    log::warn!("Failed to load script '{}': {}", script_name, e);
-                    continue;
-                }
-                
-                if let Err(e) = self.script_manager.init_entity_script(entity_id, &script_name, &mut self.world, &self.input_state) {
-                    log_once::warn_once!("Failed to initialize script '{}' for entity {:?}: {}", script_name, entity_id, e);
-                }
-            } else {
-                log_once::warn_once!("Script content not found for '{}'", script_name);
-            }
-        }
-
         self.current_scene_name = scene_name;
-        log::info!("Scene loaded successfully with {} entities", self.world.len());
 
-        Ok(())
-    }
-
-    #[allow(dead_code)] //remove this, give it a purpose later
-    fn switch_scene(&mut self, graphics: &mut Graphics, scene_name: String) -> anyhow::Result<()> {
-        if self.scene_data.contains_key(&scene_name) {
-            for (entity_id, _) in self.world.query::<&ScriptComponent>().iter() {
-                self.script_manager.remove_entity_script(entity_id);
-            }
-            
-            self.load_scene(graphics, scene_name)?;
-        } else {
-            return Err(anyhow::anyhow!("Scene '{}' not found", scene_name));
-        }
         Ok(())
     }
 }
@@ -225,75 +165,79 @@ fn setup_from_runtime_data(
 
 impl Scene for RuntimeScene {
     fn load(&mut self, graphics: &mut Graphics) {
-        let scene_name = if self.scene_data.contains_key("Default") {
-            "Default".to_string()
-        } else if let Some(first_scene) = self.scene_data.keys().next() {
-            first_scene.clone()
-        } else {
-            log::error!("No scenes available to load");
-            return;
-        };
-
-        if let Err(e) = self.load_scene(graphics, scene_name) {
-            log::error!("Failed to load scene: {}", e);
-            return;
+        if let Err(e) = self.load_scene(graphics, "Default") {
+            log::error!("Failed to load scene 'Default': {}", e);
         }
 
         let shader = Shader::new(
             graphics,
             include_str!("shader.wgsl"),
-            Some("runtime_shader"),
+            Some("redback_runtime_default"),
         );
+        let texture_bind_layout = graphics.texture_bind_group().clone();
+        let model_view_layout = graphics.create_model_uniform_bind_group_layout();
 
-        let texture_bind_group = &graphics.texture_bind_group().clone();
-        let model_layout = graphics.create_model_uniform_bind_group_layout();
-
-        if let Some(camera) = self.camera_manager.get_camera_mut(&CameraType::Player) {
-            camera.aspect = (graphics.screen_size.0 / graphics.screen_size.1) as f64;
+        if let Some(camera) = self.camera_manager.get_active() {
             let pipeline = graphics.create_render_pipline(
                 &shader,
-                vec![texture_bind_group, camera.layout(), &model_layout],
+                vec![&texture_bind_layout, &model_view_layout, &camera.layout()],
             );
             self.render_pipeline = Some(pipeline);
-            log::info!("Render pipeline created successfully");
         } else {
-            log::error!("No active camera found, cannot create render pipeline");
+            let fallback_camera = Camera::predetermined(graphics);
+            let pipeline = graphics.create_render_pipline(
+                &shader,
+                vec![&texture_bind_layout, &model_view_layout, &fallback_camera.layout()],
+            );
+            self.render_pipeline = Some(pipeline);
         }
 
         self.window = Some(graphics.state.window.clone());
     }
 
     fn update(&mut self, dt: f32, graphics: &mut Graphics) {
-        self.camera_manager.update_camera_following(&self.world, dt);
-        self.camera_manager.update_all(dt, graphics);
-
-        let script_entities: Vec<_> = self.world.query::<&ScriptComponent>().iter()
-            .map(|(entity_id, script)| (entity_id, script.name.clone()))
-            .collect();
-
-        for (entity_id, script_name) in script_entities {
-            if let Err(e) = self.script_manager.update_entity_script(entity_id, &script_name, &mut self.world, &self.input_state, dt) {
-                log_once::warn_once!("Failed to update script '{}' for entity {:?}: {}", script_name, entity_id, e);
+        if !self.input_state.is_cursor_locked {
+            if let Some(window) = &self.window {
+                window.set_cursor_visible(true);
             }
         }
+
+        let mut script_entities: Vec<(hecs::Entity, String)> = Vec::new();
+        for (entity_id, script) in self.world.query::<&ScriptComponent>().iter() {
+            script_entities.push((entity_id, script.name.clone()));
+        }
+
+        for (entity_id, script_name) in script_entities {
+            if let Err(e) = self
+                .script_manager
+                .update_entity_script(entity_id, &script_name, &mut self.world, &self.input_state, dt)
+            {
+                log::warn!(
+                    "Failed to update script '{}' for entity {:?}: {}",
+                    script_name,
+                    entity_id,
+                    e
+                );
+            }
+        }
+
+        self.camera_manager.update_camera_following(&self.world, dt);
+
+        self.camera_manager.update_all(dt, graphics);
 
         let query = self.world.query_mut::<(&mut AdoptedEntity, &Transform)>();
         for (_, (entity, transform)) in query {
             entity.update(graphics, transform);
         }
 
-        if !self.is_cursor_locked {
-            if let Some(window) = &self.window {
-                window.set_cursor_visible(true);
-            }
-        }
+        self.input_state.mouse_delta = None;
     }
 
     fn render(&mut self, graphics: &mut Graphics) {
         let color = Color {
-            r: 0.1,
-            g: 0.2,
-            b: 0.3,
+            r: 100.0 / 255.0,
+            g: 149.0 / 255.0,
+            b: 237.0 / 255.0,
             a: 1.0,
         };
 
@@ -320,6 +264,8 @@ impl Scene for RuntimeScene {
                     entity.render(&mut render_pass, camera);
                 }
             }
+        } else {
+            log_once::warn_once!("No render pipeline found!");
         }
 
         self.window = Some(graphics.state.window.clone());
@@ -337,8 +283,27 @@ impl Scene for RuntimeScene {
 }
 
 impl Keyboard for RuntimeScene {
-    fn key_down(&mut self, key: KeyCode, _event_loop: &ActiveEventLoop) {        
-        self.input_state.pressed_keys.insert(key);
+    fn key_down(&mut self, key: KeyCode, _event_loop: &ActiveEventLoop) {
+        match key {
+            KeyCode::Escape => {
+                self.scene_command = SceneCommand::Quit;
+            }
+            KeyCode::F1 => {
+                self.input_state.is_cursor_locked = !self.input_state.is_cursor_locked;
+                self.input_state.lock_cursor(self.input_state.is_cursor_locked);
+                if let Some(window) = &self.window {
+                    window.set_cursor_visible(!self.input_state.is_cursor_locked);
+                    if self.input_state.is_cursor_locked {
+                        let size = window.inner_size();
+                        let center = PhysicalPosition::new(size.width as f64 / 2.0, size.height as f64 / 2.0);
+                        let _ = window.set_cursor_position(center);
+                    }
+                }
+            }
+            _ => {
+                self.input_state.pressed_keys.insert(key);
+            }
+        }
     }
 
     fn key_up(&mut self, key: KeyCode, _event_loop: &ActiveEventLoop) {
@@ -348,7 +313,24 @@ impl Keyboard for RuntimeScene {
 
 impl Mouse for RuntimeScene {
     fn mouse_move(&mut self, position: PhysicalPosition<f64>) {
-        self.input_state.mouse_pos = position.into();
+        if self.input_state.is_cursor_locked {
+            if let Some(window) = &self.window {
+                let size = window.inner_size();
+                let center = PhysicalPosition::new(size.width as f64 / 2.0, size.height as f64 / 2.0);
+                let dx = position.x - center.x;
+                let dy = position.y - center.y;
+                self.input_state.mouse_delta = Some((dx, dy));
+
+                let _ = window.set_cursor_position(center);
+                window.set_cursor_visible(false);
+            } else {
+                self.input_state.mouse_pos = position.into();
+                self.input_state.mouse_delta = None;
+            }
+        } else {
+            self.input_state.mouse_pos = position.into();
+            self.input_state.mouse_delta = None;
+        }
     }
 
     fn mouse_down(&mut self, button: MouseButton) {
