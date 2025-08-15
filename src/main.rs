@@ -1,17 +1,46 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use dropbear_engine::{camera::Camera, entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window}, WindowConfiguration};
 use eucalyptus::{camera::{CameraType, CameraManager}, scripting::{ScriptManager, input::InputState}, states::{RuntimeData, SceneConfig, ScriptComponent}};
 
-fn main() -> anyhow::Result<()> {    
-    if std::env::var("RUST_LOG").is_err() {
-        unsafe {
-            std::env::set_var("RUST_LOG", "info,redback_runtime=debug");
-        }
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn android_main() {
+    #[cfg(debug_assertions)]
+    {
+        unsafe { std::env::set_var("RUST_BACKTRACE", "full"); }
+        android_logger::init_once(
+            android_logger::Config::default().with_max_level(log::Level::Trace.to_level_filter()),
+        );
     }
-    let _ = env_logger::try_init();
 
-    // ensure that {project_name}.eupak exists in same dir as runtime
+    std::thread::spawn(|| {
+        if let Err(e) = run() {
+            log::error!("Runtime failed: {:?}", e);
+        }
+    });
+}
+
+fn main() -> anyhow::Result<()> {
+    #[cfg(not(target_os = "android"))]
+    {
+        let app_name = env!("CARGO_BIN_NAME");
+        if cfg!(debug_assertions) {
+            log::info!("Running in dev mode");
+            let app_target = app_name.replace('-', "_");
+            let log_config = format!("dropbear_engine=trace,{}=debug,warn", app_target);
+            unsafe { std::env::set_var("RUST_LOG", log_config) };
+        }
+        env_logger::init();
+    }
+
+    run()?;
+    Ok(())
+}
+
+fn run() -> anyhow::Result<()> {
     let current_exe = std::env::current_exe()?;
     let file_name = current_exe
         .file_name()
@@ -30,7 +59,6 @@ fn main() -> anyhow::Result<()> {
 
     log::info!("Loading runtime data from: {}", init_eupak_path.display());
 
-    // decode that content
     let bytes = std::fs::read(&init_eupak_path)?;
     let (content, _): (RuntimeData, usize) = bincode::decode_from_slice(&bytes, bincode::config::standard())?;
     
@@ -148,10 +176,10 @@ impl RuntimeScene {
                 }
                 
                 if let Err(e) = self.script_manager.init_entity_script(entity_id, &script_name, &mut self.world, &self.input_state) {
-                    log::warn!("Failed to initialize script '{}' for entity {:?}: {}", script_name, entity_id, e);
+                    log_once::warn_once!("Failed to initialize script '{}' for entity {:?}: {}", script_name, entity_id, e);
                 }
             } else {
-                log::warn!("Script content not found for '{}'", script_name);
+                log_once::warn_once!("Script content not found for '{}'", script_name);
             }
         }
 
@@ -245,7 +273,7 @@ impl Scene for RuntimeScene {
 
         for (entity_id, script_name) in script_entities {
             if let Err(e) = self.script_manager.update_entity_script(entity_id, &script_name, &mut self.world, &self.input_state, dt) {
-                log::warn!("Failed to update script '{}' for entity {:?}: {}", script_name, entity_id, e);
+                log_once::warn_once!("Failed to update script '{}' for entity {:?}: {}", script_name, entity_id, e);
             }
         }
 
