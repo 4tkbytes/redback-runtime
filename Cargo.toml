@@ -20,6 +20,9 @@ eucalyptus = { git = "https://github.com/4tkbytes/dropbear" }
 # eucalyptus = { path = "../eucalyptus", features = ["data-only"] }
 egui = "0.32"
 
+[patch.crates-io]
+russimp-sys = { git = "https://github.com/skillissuedev/russimp-sys" }
+
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.15"
 
