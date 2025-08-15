@@ -213,7 +213,7 @@ impl Scene for RuntimeScene {
 
         let shader = Shader::new(
             graphics,
-            include_str!("../../eucalyptus/src/shader.wgsl"),
+            include_str!("shader.wgsl"),
             Some("runtime_shader"),
         );
 
