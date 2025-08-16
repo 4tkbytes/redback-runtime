@@ -2,26 +2,10 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
-use dropbear_engine::{camera::Camera, entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window}, WindowConfiguration};
+use dropbear_engine::{entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, lighting::{Light, LightManager, LightType}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, WindowConfiguration};
+use glam::DVec3;
+use winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
 use eucalyptus::{camera::CameraManager, scripting::{ScriptManager, input::InputState}, states::{RuntimeData, SceneConfig, ScriptComponent}};
-
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "C" fn android_main() {
-    #[cfg(debug_assertions)]
-    {
-        unsafe { std::env::set_var("RUST_BACKTRACE", "full"); }
-        android_logger::init_once(
-            android_logger::Config::default().with_max_level(log::Level::Trace.to_level_filter()),
-        );
-    }
-
-    std::thread::spawn(|| {
-        if let Err(e) = run() {
-            log::error!("Runtime failed: {:?}", e);
-        }
-    });
-}
 
 fn main() -> anyhow::Result<()> {
     #[cfg(not(target_os = "android"))]
@@ -85,6 +69,7 @@ struct RuntimeScene {
     world: hecs::World,
     camera_manager: CameraManager,
     script_manager: ScriptManager,
+    light_manager: LightManager,
     scene_command: SceneCommand,
     input_state: InputState,
     render_pipeline: Option<RenderPipeline>,
@@ -104,6 +89,7 @@ impl RuntimeScene {
             world: hecs::World::new(),
             camera_manager: CameraManager::new(),
             script_manager: ScriptManager::new(),
+            light_manager: LightManager::new(),
             scene_command: SceneCommand::None,
             input_state: InputState::new(),
             render_pipeline: None,
@@ -170,7 +156,6 @@ impl Scene for RuntimeScene {
             log::error!("Failed to load scene 'Default': {}", e);
         }
 
-        // self.camera_manager.clear_player_camera_target();
         self.camera_manager.set_active(eucalyptus::camera::CameraType::Player);
 
         let shader = Shader::new(
@@ -178,22 +163,33 @@ impl Scene for RuntimeScene {
             include_str!("shader.wgsl"),
             Some("redback_runtime_default"),
         );
-        let texture_bind_layout = graphics.texture_bind_group().clone();
-        let model_view_layout = graphics.create_model_uniform_bind_group_layout();
 
-        if let Some(camera) = self.camera_manager.get_active() {
+        let texture_bind_group = graphics.texture_bind_group().clone();
+
+        let main_light = Light::new(graphics, DVec3::Y, DVec3 { x: 1.0, y: 1.0, z: 1.0 }, LightType::Diffuse, Some("Light"));
+        self.light_manager.add("Main Light", main_light);
+
+        if let (Some(camera), Some(light)) = (self.camera_manager.get_active_mut(), self.light_manager.get("Main Light")) {
+            camera.aspect = graphics.screen_size.0 as f64 / graphics.screen_size.1 as f64;
             let pipeline = graphics.create_render_pipline(
                 &shader,
-                vec![&texture_bind_layout, &model_view_layout, &camera.layout()],
+                vec![
+                    &texture_bind_group, 
+                    camera.layout(),
+                    light.layout(),
+                ],
+                None,
             );
             self.render_pipeline = Some(pipeline);
+            self.light_manager.create_render_pipeline(
+                graphics, 
+                "Main Light", 
+                include_str!("light.wgsl"), 
+                camera, 
+                Some("Light Pipeline")
+            );
         } else {
-            let fallback_camera = Camera::predetermined(graphics);
-            let pipeline = graphics.create_render_pipline(
-                &shader,
-                vec![&texture_bind_layout, &model_view_layout, &fallback_camera.layout()],
-            );
-            self.render_pipeline = Some(pipeline);
+            panic!("Unable to create render pipeline, which is required for graphics. Please rerun with the logs enabled to figure out the issue or send to the devs!");
         }
 
         self.window = Some(graphics.state.window.clone());
@@ -262,10 +258,12 @@ impl Scene for RuntimeScene {
             if let Some(camera) = self.camera_manager.get_active() {
                 let mut query = self.world.query::<(&AdoptedEntity, &Transform)>();
                 let mut render_pass = graphics.clear_colour(color);
-                render_pass.set_pipeline(pipeline);
+
+                self.light_manager.update_all(graphics);
+                self.light_manager.render(&mut render_pass, camera);
 
                 for (_, (entity, _)) in query.iter() {
-                    entity.render(&mut render_pass, camera);
+                    entity.render(&mut render_pass, pipeline, camera, &self.light_manager);
                 }
             }
         } else {
