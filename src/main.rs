@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
         if cfg!(debug_assertions) {
             log::info!("Running in dev mode");
             let app_target = app_name.replace('-', "_");
-            let log_config = format!("dropbear_engine=trace,{}=debug,warn", app_target);
+            let log_config = format!("dropbear_engine=trace,{}=debug,warn, eucalyptus=debug,warn", app_target);
             unsafe { std::env::set_var("RUST_LOG", log_config) };
         }
         env_logger::init();
@@ -63,6 +63,8 @@ fn run() -> anyhow::Result<()> {
     let (content, _): (RuntimeData, usize) = bincode::decode_from_slice(&bytes, bincode::config::standard())?;
     
     log::info!("Loaded {} scenes", content.scene_data.len());
+
+    log::debug!("Runtime Data: {:#?}", content);
 
     let config = WindowConfiguration {
         windowed_mode: dropbear_engine::WindowedModes::Maximised,
@@ -139,7 +141,6 @@ impl RuntimeScene {
         }
         
         self.current_scene_name = scene_name;
-
         Ok(())
     }
 }
@@ -168,6 +169,9 @@ impl Scene for RuntimeScene {
         if let Err(e) = self.load_scene(graphics, "Default") {
             log::error!("Failed to load scene 'Default': {}", e);
         }
+
+        // self.camera_manager.clear_player_camera_target();
+        self.camera_manager.set_active(eucalyptus::camera::CameraType::Player);
 
         let shader = Shader::new(
             graphics,
@@ -313,24 +317,23 @@ impl Keyboard for RuntimeScene {
 
 impl Mouse for RuntimeScene {
     fn mouse_move(&mut self, position: PhysicalPosition<f64>) {
-        if self.input_state.is_cursor_locked {
+        if self.input_state.is_cursor_locked
+        {
             if let Some(window) = &self.window {
                 let size = window.inner_size();
-                let center = PhysicalPosition::new(size.width as f64 / 2.0, size.height as f64 / 2.0);
+                let center =
+                    PhysicalPosition::new(size.width as f64 / 2.0, size.height as f64 / 2.0);
+
                 let dx = position.x - center.x;
                 let dy = position.y - center.y;
-                self.input_state.mouse_delta = Some((dx, dy));
+                let camera = self.camera_manager.get_active_mut().unwrap();
+                camera.track_mouse_delta(dx, dy);
 
                 let _ = window.set_cursor_position(center);
                 window.set_cursor_visible(false);
-            } else {
-                self.input_state.mouse_pos = position.into();
-                self.input_state.mouse_delta = None;
             }
-        } else {
-            self.input_state.mouse_pos = position.into();
-            self.input_state.mouse_delta = None;
         }
+        self.input_state.mouse_pos = (position.x, position.y);
     }
 
     fn mouse_down(&mut self, button: MouseButton) {
