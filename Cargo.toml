@@ -18,7 +18,7 @@ log = "0.4"
 log-once = "0.4"
 env_logger = "0.11"
 hecs = { version = "0.10", features = ["serde"] }
-glam = { version = "0.30" }
+glam = { version = "0.30" } 
 # dropbear-engine = { git = "https://github.com/4tkbytes/dropbear" }
 # eucalyptus = { git = "https://github.com/4tkbytes/dropbear" }
 dropbear-engine = { path = "../dropbear-engine" }
