@@ -1,3 +1,7 @@
+// This is just for android, as it uses a dynamic library to load itself. On top of that, it uses
+// logcat for logging instead of env_logger (as in PC). There might be some useful stuff in this
+// library later on, but for now, its useless...
+
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn android_main() {

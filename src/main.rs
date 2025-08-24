@@ -1,10 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
-
+use bincode::error::DecodeError;
 use dropbear_engine::{entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, lighting::{Light, LightManager, LightType}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, WindowConfiguration};
 use glam::DVec3;
+use rfd::{MessageButtons, MessageDialogResult, MessageLevel};
 use winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
+use dropbear_engine::lighting::LightComponent;
+use dropbear_engine::model::{DrawLight, DrawModel};
 use eucalyptus::{camera::CameraManager, scripting::{ScriptManager, input::InputState}, states::{RuntimeData, SceneConfig, ScriptComponent}};
 
 fn main() -> anyhow::Result<()> {
@@ -44,7 +47,39 @@ fn run() -> anyhow::Result<()> {
     log::info!("Loading runtime data from: {}", init_eupak_path.display());
 
     let bytes = std::fs::read(&init_eupak_path)?;
-    let (content, _): (RuntimeData, usize) = bincode::decode_from_slice(&bytes, bincode::config::standard())?;
+    let (content, _): (RuntimeData, usize) = match bincode::decode_from_slice(&bytes, bincode::config::standard()) {
+            Ok((content, len)) => (content, len),
+            Err(e) if matches!(e, DecodeError::Utf8 { .. }) => {
+                log::error!("Uh oh, hit an error attempting to decode {}...", init_eupak_path.display());
+                let dialogue = rfd::MessageDialog::new()
+                    .set_title("Error loading game")
+                    .set_description("Your game .eupak package is outdated and cannot be read with the latest redback-runtime executable, which means you \
+                    miss out on features that can be crucial to a game. \n\nPlease either update your game, use a supported redback-runtime version \
+                    or report this issue to the developer. \n\n\
+                    Logs are attached in [TEMP LOG LOCATION PLACEHOLDER], so send that to them too! \
+                    \n\nGood Luck...")
+                    .set_buttons(MessageButtons::Ok)
+                    .set_level(MessageLevel::Error)
+                    .show();
+                match dialogue {
+                    MessageDialogResult::Ok => {panic!("Error loading package: {e}\n\nPlease report this to the game developer!")}
+                    _ => {panic!("Error loading package: {e}\n\nPlease report this to the game developer!\n\n")}
+                }
+            }
+            Err(e) => {
+                log::error!("Uh oh, hit an error attempting to decode {}...", init_eupak_path.display());
+                let dialogue = rfd::MessageDialog::new()
+                    .set_title("Error loading game")
+                    .set_description(format!("Error loading package: {}", e))
+                    .set_buttons(MessageButtons::Ok)
+                    .set_level(MessageLevel::Error)
+                    .show();
+                match dialogue {
+                    MessageDialogResult::Ok => {panic!("Error loading package: {e}\nPlease report this to the game developer!\n\n")}
+                    _ => {panic!("Error loading package: {e}\nPlease report this to the game developer!\n\n")}
+                }
+            }
+    };
     
     log::info!("Loaded {} scenes", content.scene_data.len());
 
@@ -164,28 +199,25 @@ impl Scene for RuntimeScene {
             Some("redback_runtime_default"),
         );
 
+        self.light_manager.create_light_array_resources(graphics);
         let texture_bind_group = graphics.texture_bind_group().clone();
 
-        let main_light = Light::new(graphics, DVec3::Y, DVec3 { x: 1.0, y: 1.0, z: 1.0 }, LightType::Diffuse, Some("Light"));
-        self.light_manager.add("Main Light", main_light);
-
-        if let (Some(camera), Some(light)) = (self.camera_manager.get_active_mut(), self.light_manager.get("Main Light")) {
-            camera.aspect = graphics.screen_size.0 as f64 / graphics.screen_size.1 as f64;
+        if let Some(camera) = self.camera_manager.get_active() {
             let pipeline = graphics.create_render_pipline(
                 &shader,
                 vec![
-                    &texture_bind_group, 
+                    &texture_bind_group,
                     camera.layout(),
-                    light.layout(),
+                    self.light_manager.layout()
                 ],
                 None,
             );
             self.render_pipeline = Some(pipeline);
+
             self.light_manager.create_render_pipeline(
-                graphics, 
-                "Main Light", 
-                include_str!("light.wgsl"), 
-                camera, 
+                graphics,
+                include_str!("light.wgsl"),
+                camera,
                 Some("Light Pipeline")
             );
         } else {
@@ -234,6 +266,7 @@ impl Scene for RuntimeScene {
     }
 
     fn render(&mut self, graphics: &mut Graphics) {
+        // cornflower blue
         let color = Color {
             r: 100.0 / 255.0,
             g: 149.0 / 255.0,
@@ -241,36 +274,37 @@ impl Scene for RuntimeScene {
             a: 1.0,
         };
 
-        let texture_id = graphics.state.texture_id.clone();
-        let (display_width, display_height) = graphics.screen_size;
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new())
-            .show(graphics.get_egui_context(), |ui| {
-                let rect = ui.max_rect();
-                ui.put(
-                    rect,
-                    egui::Image::new((texture_id, [display_width, display_height].into()))
-                        .fit_to_exact_size([display_width, display_height].into()),
-                );
-            });
-
+        self.window = Some(graphics.state.window.clone());
         if let Some(pipeline) = &self.render_pipeline {
             if let Some(camera) = self.camera_manager.get_active() {
-                let mut query = self.world.query::<(&AdoptedEntity, &Transform)>();
-                let mut render_pass = graphics.clear_colour(color);
+                let mut light_query = self.world.query::<(&Light, &LightComponent)>();
+                let mut entity_query = self.world.query::<(&AdoptedEntity, &Transform)>();
+                {
+                    let mut render_pass = graphics.clear_colour(color);
+                    if let Some(light_pipeline) = &self.light_manager.pipeline {
+                        render_pass.set_pipeline(light_pipeline);
+                        for (_, (light, component)) in light_query.iter() {
+                            if component.enabled {
+                                render_pass.set_vertex_buffer(1, light.instance_buffer.as_ref().unwrap().slice(..));
+                                render_pass.draw_light_model(
+                                    light.model(),
+                                    camera.bind_group(),
+                                    light.bind_group(),
+                                );
+                            }
+                        }
+                    }
 
-                self.light_manager.update_all(graphics);
-                self.light_manager.render(&mut render_pass, camera);
+                    render_pass.set_pipeline(pipeline);
 
-                for (_, (entity, _)) in query.iter() {
-                    entity.render(&mut render_pass, pipeline, camera, &self.light_manager);
+                    for (_, (entity, _)) in entity_query.iter() {
+                        render_pass.set_vertex_buffer(1, entity.instance_buffer.as_ref().unwrap().slice(..));
+                        // render_pass.set_bind_group(2, entity.uniform_bind_group.as_ref().unwrap(), &[]);
+                        render_pass.draw_model(entity.model(), camera.bind_group(), self.light_manager.bind_group());
+                    }
                 }
             }
-        } else {
-            log_once::warn_once!("No render pipeline found!");
         }
-
-        self.window = Some(graphics.state.window.clone());
     }
 
     fn exit(&mut self, _event_loop: &ActiveEventLoop) {
