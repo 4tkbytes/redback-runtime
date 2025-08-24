@@ -3,6 +3,7 @@ name = "redback-runtime" # change to your liking
 version = "0.1.2"
 edition = "2024"
 license = "GPL-3.0-or-later"
+authors = ["4tkbytes <4tkbytes@pm.me>"]
 repository = "https://github.com/4tkbytes/dropbear-engine"
 readme = "README.md"
 
@@ -17,7 +18,8 @@ log = "0.4"
 log-once = "0.4"
 env_logger = "0.11"
 hecs = { version = "0.10", features = ["serde"] }
-glam = { version = "0.30" } 
+glam = { version = "0.30" }
+rfd = "0.15.4"
 # dropbear-engine = { git = "https://github.com/4tkbytes/dropbear" }
 # eucalyptus = { git = "https://github.com/4tkbytes/dropbear" }
 dropbear-engine = { path = "../dropbear-engine" }
