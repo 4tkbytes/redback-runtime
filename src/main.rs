@@ -2,29 +2,27 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 use bincode::error::DecodeError;
-use dropbear_engine::{entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, lighting::{Light, LightManager, LightType}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, WindowConfiguration};
-use glam::DVec3;
+use dropbear_engine::{entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, lighting::{Light, LightManager}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, WindowConfiguration};
 use rfd::{MessageButtons, MessageDialogResult, MessageLevel};
 use winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
 use dropbear_engine::lighting::LightComponent;
 use dropbear_engine::model::{DrawLight, DrawModel};
 use eucalyptus::{camera::CameraManager, scripting::{ScriptManager, input::InputState}, states::{RuntimeData, SceneConfig, ScriptComponent}};
 
-fn main() -> anyhow::Result<()> {
+fn main() {
     #[cfg(not(target_os = "android"))]
     {
-        let app_name = env!("CARGO_BIN_NAME");
-        if cfg!(debug_assertions) {
-            log::info!("Running in dev mode");
-            let app_target = app_name.replace('-', "_");
-            let log_config = format!("dropbear_engine=trace,{}=debug,warn, eucalyptus=debug,warn", app_target);
-            unsafe { std::env::set_var("RUST_LOG", log_config) };
-        }
-        env_logger::init();
+        // good to set this earlier on so we can catch any .eupak issues
+        dropbear_engine::panic::set_hook();
     }
 
-    run()?;
-    Ok(())
+    match run() {
+        Ok(_) => {}
+        Err(e) => {
+            panic!("{}", e)
+        }
+    }
+    log::info!("Exiting...");
 }
 
 fn run() -> anyhow::Result<()> {
@@ -89,6 +87,11 @@ fn run() -> anyhow::Result<()> {
         windowed_mode: dropbear_engine::WindowedModes::Maximised,
         title: project_name.clone(),
         max_fps: 60,
+        // to be changed by user
+        app_info: app_dirs2::AppInfo {
+            name: "redback-runtime",
+            author: "4tkbytes",
+        },
     };
 
     dropbear_engine::run_app!(config, |sm, im| {
