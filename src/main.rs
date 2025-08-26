@@ -3,7 +3,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 use bincode::error::DecodeError;
 use dropbear_engine::{entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, lighting::{Light, LightManager}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, WindowConfiguration};
-use rfd::{MessageButtons, MessageDialogResult, MessageLevel};
 use winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
 use dropbear_engine::lighting::LightComponent;
 use dropbear_engine::model::{DrawLight, DrawModel};
@@ -49,33 +48,56 @@ fn run() -> anyhow::Result<()> {
             Ok((content, len)) => (content, len),
             Err(e) if matches!(e, DecodeError::Utf8 { .. }) => {
                 log::error!("Uh oh, hit an error attempting to decode {}...", init_eupak_path.display());
-                let dialogue = rfd::MessageDialog::new()
-                    .set_title("Error loading game")
-                    .set_description("Your game .eupak package is outdated and cannot be read with the latest redback-runtime executable, which means you \
+                let text = "Your game .eupak package is outdated and cannot be read with the latest redback-runtime executable, which means you \
+                    miss out on features that can be crucial to a game. \n\nPlease either update your game, use a supported redback-runtime version \
+                    or report this issue to the developer. \n\n\
+                    Logs are attached in [TEMP LOG LOCATION PLACEHOLDER], so send that to them too! \
+                    \n\nGood Luck...".to_string();
+                #[cfg(not(target_os = "android"))]
+                {
+                    let dialogue = rfd::MessageDialog::new()
+                        .set_title("Error loading game")
+                        .set_description(text)
+                        .set_buttons(rfd::MessageButtons::Ok)
+                        .set_level(rfd::MessageLevel::Error)
+                        .show();
+                    match dialogue {
+                        rfd::MessageDialogResult::Ok => {panic!("Error loading package: {e}\n\nPlease report this to the game developer!")}
+                        _ => {panic!("Error loading package: {e}\n\nPlease report this to the game developer!\n\n")}
+                    }
+                }
+
+                #[cfg(target_os = "android")]
+                {
+                    panic!("Your game .eupak package is outdated and cannot be read with the latest redback-runtime executable, which means you \
                     miss out on features that can be crucial to a game. \n\nPlease either update your game, use a supported redback-runtime version \
                     or report this issue to the developer. \n\n\
                     Logs are attached in [TEMP LOG LOCATION PLACEHOLDER], so send that to them too! \
                     \n\nGood Luck...")
-                    .set_buttons(MessageButtons::Ok)
-                    .set_level(MessageLevel::Error)
-                    .show();
-                match dialogue {
-                    MessageDialogResult::Ok => {panic!("Error loading package: {e}\n\nPlease report this to the game developer!")}
-                    _ => {panic!("Error loading package: {e}\n\nPlease report this to the game developer!\n\n")}
                 }
             }
             Err(e) => {
                 log::error!("Uh oh, hit an error attempting to decode {}...", init_eupak_path.display());
-                let dialogue = rfd::MessageDialog::new()
-                    .set_title("Error loading game")
-                    .set_description(format!("Error loading package: {}", e))
-                    .set_buttons(MessageButtons::Ok)
-                    .set_level(MessageLevel::Error)
-                    .show();
-                match dialogue {
-                    MessageDialogResult::Ok => {panic!("Error loading package: {e}\nPlease report this to the game developer!\n\n")}
-                    _ => {panic!("Error loading package: {e}\nPlease report this to the game developer!\n\n")}
+                let text = format!("Error loading package: {}", e);
+                #[cfg(not(target_os = "android"))]
+                {
+                    let dialogue = rfd::MessageDialog::new()
+                        .set_title("Error loading game")
+                        .set_description(text)
+                        .set_buttons(rfd::MessageButtons::Ok)
+                        .set_level(rfd::MessageLevel::Error)
+                        .show();
+                    match dialogue {
+                        rfd::MessageDialogResult::Ok => {panic!("Error loading package: {e}\nPlease report this to the game developer!\n\n")}
+                        _ => {panic!("Error loading package: {e}\nPlease report this to the game developer!\n\n")}
+                    }
                 }
+
+                #[cfg(target_os = "android")]
+                {
+                    panic!("Error loading package: {e}\nPlease report this to the game developer!\n\n");
+                }
+
             }
     };
     

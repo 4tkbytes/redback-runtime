@@ -19,7 +19,6 @@ log-once = "0.4"
 env_logger = "0.11"
 hecs = { version = "0.10", features = ["serde"] }
 glam = { version = "0.30" }
-rfd = "0.15.4"
 # dropbear-engine = { git = "https://github.com/4tkbytes/dropbear" }
 # eucalyptus = { git = "https://github.com/4tkbytes/dropbear" }
 dropbear-engine = { path = "../dropbear-engine" }
@@ -29,8 +28,10 @@ winit = "0.30"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.15"
-winit = { version = "0.30", features = [] }
 android-activity = { version = "0.6", features = [ "game-activity" ] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rfd = "0.15.4"
 
 [package.metadata.android]
 package = "com.fourtkbytes.redbackruntime" # change to your liking
