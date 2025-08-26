@@ -15,15 +15,11 @@ anyhow = { version = "1.0", features = ["backtrace"] }
 app_dirs2 = "2.5"
 bincode = { version = "2.0", features = ["serde"] }
 log = "0.4"
-log-once = "0.4"
-env_logger = "0.11"
 hecs = { version = "0.10", features = ["serde"] }
-glam = { version = "0.30" }
 # dropbear-engine = { git = "https://github.com/4tkbytes/dropbear" }
 # eucalyptus = { git = "https://github.com/4tkbytes/dropbear" }
 dropbear-engine = { path = "../dropbear-engine" }
 eucalyptus = { path = "../eucalyptus", features = ["data-only"] }
-egui = "0.32"
 winit = "0.30"
 
 [target.'cfg(target_os = "android")'.dependencies]
@@ -33,10 +29,30 @@ android-activity = { version = "0.6", features = [ "game-activity" ] }
 [target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.15.4"
 
+[patch.crates-io]
+russimp-sys-ng = { git = "https://github.com/Kek5chen/russimp-sys-ng", branch = "fix-android-compilation" }
+
+[profile.release]
+strip = true
+
 [package.metadata.android]
 package = "com.fourtkbytes.redbackruntime" # change to your liking
 build_targets = [ "aarch64-linux-android", "armv7-linux-androideabi" ]
 large_heap = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1.6"
+console_log = "1.0"
+wgpu = { version = "26.0.1", features = ["webgl"]}
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4.30"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Window",
+    "Element",
+]}
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
 
 [package.metadata.android.sdk]
 min_sdk_version = 23
