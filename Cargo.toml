@@ -29,11 +29,8 @@ android-activity = { version = "0.6", features = [ "game-activity" ] }
 [target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.15.4"
 
-[patch.crates-io]
-russimp-sys-ng = { git = "https://github.com/Kek5chen/russimp-sys-ng", branch = "fix-android-compilation" }
-
-[profile.release]
-strip = true
+#[profile.release]
+#strip = true
 
 [package.metadata.android]
 package = "com.fourtkbytes.redbackruntime" # change to your liking
