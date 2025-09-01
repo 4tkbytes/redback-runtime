@@ -8,17 +8,17 @@ use dropbear_engine::lighting::LightComponent;
 use dropbear_engine::model::{DrawLight, DrawModel};
 use eucalyptus::{camera::CameraManager, scripting::{ScriptManager, input::InputState}, states::{RuntimeData, SceneConfig, ScriptComponent}};
 
-#[cfg(target_os = "wasm32")]
-pub fn run_web() -> Result<(), Box<dyn std::error::Error>> {
-    console_error_panic_hook::set_once();
-    match run() {
-        Ok(_) => {}
-        Err(e) => {
-            panic!("{}", e)
-        }
-    }
-    Ok(())
-}
+// pub fn run_web() -> Result<(), Box<dyn std::error::Error>> {
+//     console_error_panic_hook::set_once();
+//     match run() {
+//         Ok(_) => {}
+//         Err(e) => {
+//             panic!("{}", e)
+//         }
+//     }
+//     Ok(())
+// }
+
 fn main() {
     #[cfg(not(target_os = "android"))]
     {
@@ -159,7 +159,7 @@ impl RuntimeScene {
             current_scene_name: String::new(),
             world: hecs::World::new(),
             camera_manager: CameraManager::new(),
-            script_manager: ScriptManager::new(),
+            script_manager: ScriptManager::new().unwrap(),
             light_manager: LightManager::new(),
             scene_command: SceneCommand::None,
             input_state: InputState::new(),
