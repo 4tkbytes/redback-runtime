@@ -2,7 +2,7 @@
 name = "redback-runtime" # change to your liking
 version = "0.1.2"
 edition = "2024"
-license = "GPL-3.0-or-later"
+license-file = "LICENSE.md"
 authors = ["4tkbytes <4tkbytes@pm.me>"]
 repository = "https://github.com/4tkbytes/dropbear-engine"
 readme = "README.md"
