@@ -2,11 +2,11 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 use bincode::error::DecodeError;
-use dropbear_engine::{entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, lighting::{Light, LightManager}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, WindowConfiguration};
+use dropbear_engine::{camera::Camera, entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, lighting::{Light, LightManager}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, WindowConfiguration};
 use winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
 use dropbear_engine::lighting::LightComponent;
 use dropbear_engine::model::{DrawLight, DrawModel};
-use eucalyptus::{camera::CameraManager, scripting::{ScriptManager, input::InputState}, states::{RuntimeData, SceneConfig, ScriptComponent}};
+use eucalyptus::{camera::{CameraComponent, CameraFollowTarget}, scripting::{input::InputState, ScriptManager}, states::{RuntimeData, SceneConfig, ScriptComponent}};
 
 // pub fn run_web() -> Result<(), Box<dyn std::error::Error>> {
 //     console_error_panic_hook::set_once();
@@ -138,13 +138,13 @@ struct RuntimeScene {
     scene_data: HashMap<String, SceneConfig>,
     current_scene_name: String,
     world: hecs::World,
-    camera_manager: CameraManager,
     script_manager: ScriptManager,
     light_manager: LightManager,
     scene_command: SceneCommand,
     input_state: InputState,
     render_pipeline: Option<RenderPipeline>,
     window: Option<Arc<Window>>,
+    active_camera: Option<hecs::Entity>,
 }
 
 impl RuntimeScene {
@@ -158,13 +158,13 @@ impl RuntimeScene {
             scene_data,
             current_scene_name: String::new(),
             world: hecs::World::new(),
-            camera_manager: CameraManager::new(),
             script_manager: ScriptManager::new().unwrap(),
             light_manager: LightManager::new(),
             scene_command: SceneCommand::None,
             input_state: InputState::new(),
             render_pipeline: None,
             window: None,
+            active_camera: None,
         }
     }
 
@@ -172,12 +172,12 @@ impl RuntimeScene {
         let scene_name: String = scene_name.into();
 
         self.world.clear();
-        self.camera_manager.clear_cameras();
 
         let scene = self.scene_data.get(&scene_name).ok_or_else(|| anyhow::anyhow!("Unable to fetch scene config: Returned \"None\""))?;
 
+        self.active_camera = Some(scene.load_into_world(&mut self.world, graphics)?);
+
         scene.load_into_world(&mut self.world, graphics)?;
-        scene.load_cameras_into_manager(&mut self.camera_manager, graphics,&mut self.world)?;
 
         let mut script_entities: Vec<(hecs::Entity, ScriptComponent)> = Vec::new();
         for (entity_id, script) in self.world.query::<&ScriptComponent>().iter() {
@@ -227,8 +227,6 @@ impl Scene for RuntimeScene {
             log::error!("Failed to load scene 'Default': {}", e);
         }
 
-        self.camera_manager.set_active(eucalyptus::camera::CameraType::Player);
-
         let shader = Shader::new(
             graphics,
             include_str!("shader.wgsl"),
@@ -238,31 +236,39 @@ impl Scene for RuntimeScene {
         self.light_manager.create_light_array_resources(graphics);
         let texture_bind_group = graphics.texture_bind_group().clone();
 
-        if let Some(camera) = self.camera_manager.get_active() {
-            let pipeline = graphics.create_render_pipline(
-                &shader,
-                vec![
-                    &texture_bind_group,
-                    camera.layout(),
-                    self.light_manager.layout()
-                ],
-                None,
-            );
-            self.render_pipeline = Some(pipeline);
+        if let Some(active_camera) = self.active_camera {
+            if let Ok(mut query) = self.world.query_one::<&Camera>(active_camera) {
+                if let Some(camera) = query.get() {
+                    let pipeline = graphics.create_render_pipline(
+                        &shader,
+                        vec![
+                            &texture_bind_group,
+                            camera.layout(),
+                            self.light_manager.layout()
+                        ],
+                        None,
+                    );
+                    self.render_pipeline = Some(pipeline);
 
-            self.light_manager.create_render_pipeline(
-                graphics,
-                include_str!("light.wgsl"),
-                camera,
-                Some("Light Pipeline")
-            );
+                    self.light_manager.create_render_pipeline(
+                        graphics,
+                        include_str!("light.wgsl"),
+                        camera,
+                        Some("Light Pipeline")
+                    );
+                } else {
+                    panic!("Unable to get camera component from active camera entity!");
+                }
+            } else {
+                panic!("Unable to query active camera entity!");
+            }
         } else {
             panic!("Unable to create render pipeline, which is required for graphics. Please rerun with the logs enabled to figure out the issue or send to the devs!");
         }
 
         self.window = Some(graphics.state.window.clone());
     }
-
+    
     fn update(&mut self, dt: f32, graphics: &mut Graphics) {
         if !self.input_state.is_cursor_locked {
             if let Some(window) = &self.window {
@@ -289,9 +295,30 @@ impl Scene for RuntimeScene {
             }
         }
 
-        self.camera_manager.update_camera_following(&self.world, dt);
+        for (_entity_id, (camera, _component, follow_target)) in self
+            .world
+            .query::<(&mut Camera, &CameraComponent, Option<&CameraFollowTarget>)>()
+            .iter()
+        {
+            if let Some(target) = follow_target {
+                for (_target_entity_id, (adopted, transform)) in self
+                    .world
+                    .query::<(&AdoptedEntity, &Transform)>()
+                    .iter()
+                {
+                    if adopted.label() == &target.follow_target {
+                        let target_pos = transform.position;
+                        camera.eye = target_pos + target.offset;
+                        camera.target = target_pos;
+                        break;
+                    }
+                }
+            }
+        }
 
-        self.camera_manager.update_all(dt, graphics);
+        for (_entity_id, camera) in self.world.query::<&mut Camera>().iter() {
+            camera.update(graphics);
+        }
 
         let query = self.world.query_mut::<(&mut AdoptedEntity, &Transform)>();
         for (_, (entity, transform)) in query {
@@ -312,31 +339,34 @@ impl Scene for RuntimeScene {
 
         self.window = Some(graphics.state.window.clone());
         if let Some(pipeline) = &self.render_pipeline {
-            if let Some(camera) = self.camera_manager.get_active() {
-                let mut light_query = self.world.query::<(&Light, &LightComponent)>();
-                let mut entity_query = self.world.query::<(&AdoptedEntity, &Transform)>();
-                {
-                    let mut render_pass = graphics.clear_colour(color);
-                    if let Some(light_pipeline) = &self.light_manager.pipeline {
-                        render_pass.set_pipeline(light_pipeline);
-                        for (_, (light, component)) in light_query.iter() {
-                            if component.enabled {
-                                render_pass.set_vertex_buffer(1, light.instance_buffer.as_ref().unwrap().slice(..));
-                                render_pass.draw_light_model(
-                                    light.model(),
-                                    camera.bind_group(),
-                                    light.bind_group(),
-                                );
+            if let Some(active_camera) = self.active_camera {
+                if let Ok(mut query) = self.world.query_one::<&Camera>(active_camera) {
+                    if let Some(camera) = query.get() {
+                        let mut light_query = self.world.query::<(&Light, &LightComponent)>();
+                        let mut entity_query = self.world.query::<(&AdoptedEntity, &Transform)>();
+                        {
+                            let mut render_pass = graphics.clear_colour(color);
+                            if let Some(light_pipeline) = &self.light_manager.pipeline {
+                                render_pass.set_pipeline(light_pipeline);
+                                for (_, (light, component)) in light_query.iter() {
+                                    if component.enabled {
+                                        render_pass.set_vertex_buffer(1, light.instance_buffer.as_ref().unwrap().slice(..));
+                                        render_pass.draw_light_model(
+                                            light.model(),
+                                            camera.bind_group(),
+                                            light.bind_group(),
+                                        );
+                                    }
+                                }
+                            }
+
+                            render_pass.set_pipeline(pipeline);
+
+                            for (_, (entity, _)) in entity_query.iter() {
+                                render_pass.set_vertex_buffer(1, entity.instance_buffer.as_ref().unwrap().slice(..));
+                                render_pass.draw_model(entity.model(), camera.bind_group(), self.light_manager.bind_group());
                             }
                         }
-                    }
-
-                    render_pass.set_pipeline(pipeline);
-
-                    for (_, (entity, _)) in entity_query.iter() {
-                        render_pass.set_vertex_buffer(1, entity.instance_buffer.as_ref().unwrap().slice(..));
-                        // render_pass.set_bind_group(2, entity.uniform_bind_group.as_ref().unwrap(), &[]);
-                        render_pass.draw_model(entity.model(), camera.bind_group(), self.light_manager.bind_group());
                     }
                 }
             }
@@ -394,8 +424,13 @@ impl Mouse for RuntimeScene {
 
                 let dx = position.x - center.x;
                 let dy = position.y - center.y;
-                let camera = self.camera_manager.get_active_mut().unwrap();
-                camera.track_mouse_delta(dx, dy);
+                if let Some(active_camera) = self.active_camera {
+                    if let Ok(mut query) = self.world.query_one::<(&mut Camera, &CameraComponent)>(active_camera) {
+                        if let Some((camera, _component)) = query.get() {
+                            camera.track_mouse_delta(dx, dy);
+                        }
+                    }
+                }
 
                 let _ = window.set_cursor_position(center);
                 window.set_cursor_visible(false);
