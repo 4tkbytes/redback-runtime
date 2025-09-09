@@ -6,7 +6,7 @@ use dropbear_engine::{camera::Camera, entity::{AdoptedEntity, Transform}, gilrs:
 use winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
 use dropbear_engine::lighting::LightComponent;
 use dropbear_engine::model::{DrawLight, DrawModel};
-use eucalyptus::{camera::{CameraComponent, CameraFollowTarget}, scripting::{input::InputState, ScriptManager}, states::{RuntimeData, SceneConfig, ScriptComponent}};
+use eucalyptus_core::{camera::{CameraComponent, CameraFollowTarget}, scripting::{input::InputState, ScriptManager}, states::{RuntimeData, SceneConfig, ScriptComponent}};
 
 // pub fn run_web() -> Result<(), Box<dyn std::error::Error>> {
 //     console_error_panic_hook::set_once();
