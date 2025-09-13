@@ -192,7 +192,7 @@ fn run() -> anyhow::Result<()> {
 struct RuntimeScene {
     scene_data: HashMap<String, SceneConfig>,
     current_scene_name: String,
-    world: hecs::World,
+    world: Arc<hecs::World>,
     script_manager: ScriptManager,
     light_manager: LightManager,
     scene_command: SceneCommand,
@@ -212,7 +212,7 @@ impl RuntimeScene {
         Self {
             scene_data,
             current_scene_name: String::new(),
-            world: hecs::World::new(),
+            world: Arc::new(hecs::World::new()),
             script_manager: ScriptManager::new().unwrap(),
             light_manager: LightManager::new(),
             scene_command: SceneCommand::None,
@@ -230,16 +230,14 @@ impl RuntimeScene {
     ) -> anyhow::Result<()> {
         let scene_name: String = scene_name.into();
 
-        self.world.clear();
+        Arc::get_mut(&mut self.world).unwrap().clear();
 
         let scene = self
             .scene_data
             .get(&scene_name)
             .ok_or_else(|| anyhow::anyhow!("Unable to fetch scene config: Returned \"None\""))?;
 
-        self.active_camera = Some(scene.load_into_world(&mut self.world, graphics)?);
-
-        scene.load_into_world(&mut self.world, graphics)?;
+        self.active_camera = Some(scene.load_into_world(Arc::get_mut(&mut self.world).unwrap(), graphics)?);
 
         let mut script_entities: Vec<(hecs::Entity, ScriptComponent)> = Vec::new();
         for (entity_id, script) in self.world.query::<&ScriptComponent>().iter() {
@@ -247,7 +245,7 @@ impl RuntimeScene {
         }
 
         for (entity_id, script) in script_entities {
-            match self.script_manager.load_script(&script.path) {
+            match self.script_manager.load_script(&script.path.file_name().unwrap().to_str().unwrap().to_string(), std::fs::read(&script.path).unwrap()) {
                 Ok(script_name) => {
                     if let Err(e) = self.script_manager.init_entity_script(
                         entity_id,
@@ -398,7 +396,7 @@ impl Scene for RuntimeScene {
             camera.update(graphics);
         }
 
-        let query = self.world.query_mut::<(&mut AdoptedEntity, &Transform)>();
+        let query = Arc::get_mut(&mut self.world).unwrap().query_mut::<(&mut AdoptedEntity, &Transform)>();
         for (_, (entity, transform)) in query {
             entity.update(graphics, transform);
         }
