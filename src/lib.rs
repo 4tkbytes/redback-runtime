@@ -7,7 +7,9 @@
 pub extern "C" fn android_main() {
     #[cfg(debug_assertions)]
     {
-        unsafe { std::env::set_var("RUST_BACKTRACE", "full"); }
+        unsafe {
+            std::env::set_var("RUST_BACKTRACE", "full");
+        }
         android_logger::init_once(
             android_logger::Config::default().with_max_level(log::Level::Trace.to_level_filter()),
         );

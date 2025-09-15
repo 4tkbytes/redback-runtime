@@ -1,12 +1,30 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 use bincode::error::DecodeError;
-use dropbear_engine::{camera::Camera, entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{SharedGraphicsContext, Shader}, input::{Controller, Keyboard, Mouse}, lighting::{Light, LightManager}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, WindowConfiguration};
-use winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
 use dropbear_engine::lighting::LightComponent;
 use dropbear_engine::model::{DrawLight, DrawModel};
-use eucalyptus_core::{camera::{CameraComponent, CameraFollowTarget}, scripting::{input::InputState, ScriptManager}, states::{RuntimeData, SceneConfig, ScriptComponent}};
+use dropbear_engine::{
+    WindowConfiguration,
+    camera::Camera,
+    entity::{AdoptedEntity, Transform},
+    gilrs::{Button, GamepadId},
+    graphics::{Graphics, Shader},
+    input::{Controller, Keyboard, Mouse},
+    lighting::{Light, LightManager},
+    scene::{Scene, SceneCommand},
+    wgpu::{Color, RenderPipeline},
+};
+use eucalyptus_core::{
+    camera::{CameraComponent, CameraFollowTarget},
+    input::InputState,
+    scripting::ScriptManager,
+    states::{RuntimeData, SceneConfig, ScriptComponent},
+};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+use winit::{
+    dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode,
+    window::Window,
+};
 
 // pub fn run_web() -> Result<(), Box<dyn std::error::Error>> {
 //     console_error_panic_hook::set_once();
@@ -40,78 +58,114 @@ fn run() -> anyhow::Result<()> {
     let file_name = current_exe
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("Unable to get file name"))?;
-    let binding = file_name
-        .to_string_lossy();
+    let binding = file_name.to_string_lossy();
     let project_name = binding
         .strip_suffix(".exe")
-        .ok_or_else(|| anyhow::anyhow!("Unable to strip suffix while fetching the executable's name: {}", file_name.display()))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unable to strip suffix while fetching the executable's name: {}",
+                file_name.display()
+            )
+        })?
         .to_string();
-    let exe_dir = current_exe.parent().ok_or_else(|| anyhow::anyhow!("Failed to get executable directory"))?;
+    let exe_dir = current_exe
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get executable directory"))?;
     let init_eupak_path = exe_dir.join(format!("{}.eupak", project_name));
     if !init_eupak_path.exists() {
-        return Err(anyhow::anyhow!("{}.eupak was not found at {}, which is required to start the game.", project_name, init_eupak_path.display()));
+        return Err(anyhow::anyhow!(
+            "{}.eupak was not found at {}, which is required to start the game.",
+            project_name,
+            init_eupak_path.display()
+        ));
     }
 
     log::info!("Loading runtime data from: {}", init_eupak_path.display());
 
     let bytes = std::fs::read(&init_eupak_path)?;
-    let (content, _): (RuntimeData, usize) = match bincode::decode_from_slice(&bytes, bincode::config::standard()) {
-            Ok((content, len)) => (content, len),
-            Err(e) if matches!(e, DecodeError::Utf8 { .. }) => {
-                log::error!("Uh oh, hit an error attempting to decode {}...", init_eupak_path.display());
-                let text = "Your game .eupak package is outdated and cannot be read with the latest redback-runtime executable, which means you \
+    let (content, _): (RuntimeData, usize) = match bincode::decode_from_slice(
+        &bytes,
+        bincode::config::standard(),
+    ) {
+        Ok((content, len)) => (content, len),
+        Err(e) if matches!(e, DecodeError::Utf8 { .. }) => {
+            log::error!(
+                "Uh oh, hit an error attempting to decode {}...",
+                init_eupak_path.display()
+            );
+            let text = "Your game .eupak package is outdated and cannot be read with the latest redback-runtime executable, which means you \
                     miss out on features that can be crucial to a game. \n\nPlease either update your game, use a supported redback-runtime version \
                     or report this issue to the developer. \n\n\
                     Logs are attached in [TEMP LOG LOCATION PLACEHOLDER], so send that to them too! \
                     \n\nGood Luck...".to_string();
-                #[cfg(not(target_os = "android"))]
-                {
-                    let dialogue = rfd::MessageDialog::new()
-                        .set_title("Error loading game")
-                        .set_description(text)
-                        .set_buttons(rfd::MessageButtons::Ok)
-                        .set_level(rfd::MessageLevel::Error)
-                        .show();
-                    match dialogue {
-                        rfd::MessageDialogResult::Ok => {panic!("Error loading package: {e}\n\nPlease report this to the game developer!")}
-                        _ => {panic!("Error loading package: {e}\n\nPlease report this to the game developer!\n\n")}
+            #[cfg(not(target_os = "android"))]
+            {
+                let dialogue = rfd::MessageDialog::new()
+                    .set_title("Error loading game")
+                    .set_description(text)
+                    .set_buttons(rfd::MessageButtons::Ok)
+                    .set_level(rfd::MessageLevel::Error)
+                    .show();
+                match dialogue {
+                    rfd::MessageDialogResult::Ok => {
+                        panic!(
+                            "Error loading package: {e}\n\nPlease report this to the game developer!"
+                        )
+                    }
+                    _ => {
+                        panic!(
+                            "Error loading package: {e}\n\nPlease report this to the game developer!\n\n"
+                        )
                     }
                 }
+            }
 
-                #[cfg(target_os = "android")]
-                {
-                    panic!("Your game .eupak package is outdated and cannot be read with the latest redback-runtime executable, which means you \
+            #[cfg(target_os = "android")]
+            {
+                panic!(
+                    "Your game .eupak package is outdated and cannot be read with the latest redback-runtime executable, which means you \
                     miss out on features that can be crucial to a game. \n\nPlease either update your game, use a supported redback-runtime version \
                     or report this issue to the developer. \n\n\
                     Logs are attached in [TEMP LOG LOCATION PLACEHOLDER], so send that to them too! \
-                    \n\nGood Luck...")
-                }
+                    \n\nGood Luck..."
+                )
             }
-            Err(e) => {
-                log::error!("Uh oh, hit an error attempting to decode {}...", init_eupak_path.display());
-                let text = format!("Error loading package: {}", e);
-                #[cfg(not(target_os = "android"))]
-                {
-                    let dialogue = rfd::MessageDialog::new()
-                        .set_title("Error loading game")
-                        .set_description(text)
-                        .set_buttons(rfd::MessageButtons::Ok)
-                        .set_level(rfd::MessageLevel::Error)
-                        .show();
-                    match dialogue {
-                        rfd::MessageDialogResult::Ok => {panic!("Error loading package: {e}\nPlease report this to the game developer!\n\n")}
-                        _ => {panic!("Error loading package: {e}\nPlease report this to the game developer!\n\n")}
+        }
+        Err(e) => {
+            log::error!(
+                "Uh oh, hit an error attempting to decode {}...",
+                init_eupak_path.display()
+            );
+            let text = format!("Error loading package: {}", e);
+            #[cfg(not(target_os = "android"))]
+            {
+                let dialogue = rfd::MessageDialog::new()
+                    .set_title("Error loading game")
+                    .set_description(text)
+                    .set_buttons(rfd::MessageButtons::Ok)
+                    .set_level(rfd::MessageLevel::Error)
+                    .show();
+                match dialogue {
+                    rfd::MessageDialogResult::Ok => {
+                        panic!(
+                            "Error loading package: {e}\nPlease report this to the game developer!\n\n"
+                        )
+                    }
+                    _ => {
+                        panic!(
+                            "Error loading package: {e}\nPlease report this to the game developer!\n\n"
+                        )
                     }
                 }
-
-                #[cfg(target_os = "android")]
-                {
-                    panic!("Error loading package: {e}\nPlease report this to the game developer!\n\n");
-                }
-
             }
+
+            #[cfg(target_os = "android")]
+            {
+                panic!("Error loading package: {e}\nPlease report this to the game developer!\n\n");
+            }
+        }
     };
-    
+
     log::info!("Loaded {} scenes", content.scene_data.len());
 
     log::debug!("Runtime Data: {:#?}", content);
@@ -129,7 +183,8 @@ fn run() -> anyhow::Result<()> {
 
     dropbear_engine::run_app!(config, |sm, im| {
         setup_from_runtime_data(sm, im, content)
-    }).unwrap();
+    })
+    .unwrap();
 
     Ok(())
 }
@@ -137,7 +192,7 @@ fn run() -> anyhow::Result<()> {
 struct RuntimeScene {
     scene_data: HashMap<String, SceneConfig>,
     current_scene_name: String,
-    world: hecs::World,
+    world: Arc<hecs::World>,
     script_manager: ScriptManager,
     light_manager: LightManager,
     scene_command: SceneCommand,
@@ -157,7 +212,7 @@ impl RuntimeScene {
         Self {
             scene_data,
             current_scene_name: String::new(),
-            world: hecs::World::new(),
+            world: Arc::new(hecs::World::new()),
             script_manager: ScriptManager::new().unwrap(),
             light_manager: LightManager::new(),
             scene_command: SceneCommand::None,
@@ -168,16 +223,17 @@ impl RuntimeScene {
         }
     }
 
-    fn load_scene(&mut self, graphics: &mut SharedGraphicsContext, scene_name: impl Into::<String>) -> anyhow::Result<()> {
+    fn load_scene(&mut self, graphics: &mut Graphics, scene_name: impl Into::<String>) -> anyhow::Result<()> {
         let scene_name: String = scene_name.into();
 
-        self.world.clear();
+        Arc::get_mut(&mut self.world).unwrap().clear();
 
-        let scene = self.scene_data.get(&scene_name).ok_or_else(|| anyhow::anyhow!("Unable to fetch scene config: Returned \"None\""))?;
+        let scene = self
+            .scene_data
+            .get(&scene_name)
+            .ok_or_else(|| anyhow::anyhow!("Unable to fetch scene config: Returned \"None\""))?;
 
-        self.active_camera = Some(scene.load_into_world(&mut self.world, graphics)?);
-
-        scene.load_into_world(&mut self.world, graphics)?;
+        self.active_camera = Some(scene.load_into_world(Arc::get_mut(&mut self.world).unwrap(), graphics)?);
 
         let mut script_entities: Vec<(hecs::Entity, ScriptComponent)> = Vec::new();
         for (entity_id, script) in self.world.query::<&ScriptComponent>().iter() {
@@ -185,10 +241,20 @@ impl RuntimeScene {
         }
 
         for (entity_id, script) in script_entities {
-            match self.script_manager.load_script(&script.path) {
+            match self.script_manager.load_script(&script.path.file_name().unwrap().to_str().unwrap().to_string(), std::fs::read(&script.path).unwrap()) {
                 Ok(script_name) => {
-                    if let Err(e) = self.script_manager.init_entity_script(entity_id, &script_name, &mut self.world, &self.input_state) {
-                        log::warn!("Failed to initialise script '{}' for entity {:?}: {}", script.name, entity_id, e);
+                    if let Err(e) = self.script_manager.init_entity_script(
+                        entity_id,
+                        &script_name,
+                        &mut self.world,
+                        &self.input_state,
+                    ) {
+                        log::warn!(
+                            "Failed to initialise script '{}' for entity {:?}: {}",
+                            script.name,
+                            entity_id,
+                            e
+                        );
                     }
                 }
                 Err(e) => {
@@ -196,7 +262,7 @@ impl RuntimeScene {
                 }
             }
         }
-        
+
         self.current_scene_name = scene_name;
         Ok(())
     }
@@ -206,18 +272,21 @@ fn setup_from_runtime_data(
     mut scene_manager: dropbear_engine::scene::Manager,
     mut input_manager: dropbear_engine::input::Manager,
     runtime_data: RuntimeData,
-) -> (dropbear_engine::scene::Manager, dropbear_engine::input::Manager) {
+) -> (
+    dropbear_engine::scene::Manager,
+    dropbear_engine::input::Manager,
+) {
     let runtime_scene = Rc::new(RefCell::new(RuntimeScene::new(runtime_data)));
-    
+
     dropbear_engine::scene::add_scene_with_input(
         &mut scene_manager,
         &mut input_manager,
         runtime_scene,
         "runtime_game",
     );
-    
+
     scene_manager.switch("runtime_game");
-    
+
     (scene_manager, input_manager)
 }
 
@@ -244,7 +313,7 @@ impl Scene for RuntimeScene {
                         vec![
                             &texture_bind_group,
                             camera.layout(),
-                            self.light_manager.layout()
+                            self.light_manager.layout(),
                         ],
                         None,
                     );
@@ -254,7 +323,7 @@ impl Scene for RuntimeScene {
                         graphics,
                         include_str!("light.wgsl"),
                         camera,
-                        Some("Light Pipeline")
+                        Some("Light Pipeline"),
                     );
                 } else {
                     panic!("Unable to get camera component from active camera entity!");
@@ -263,13 +332,15 @@ impl Scene for RuntimeScene {
                 panic!("Unable to query active camera entity!");
             }
         } else {
-            panic!("Unable to create render pipeline, which is required for graphics. Please rerun with the logs enabled to figure out the issue or send to the devs!");
+            panic!(
+                "Unable to create render pipeline, which is required for graphics. Please rerun with the logs enabled to figure out the issue or send to the devs!"
+            );
         }
 
         self.window = Some(graphics.state.window.clone());
     }
     
-    fn update(&mut self, dt: f32, graphics: &mut SharedGraphicsContext) {
+    fn update(&mut self, dt: f32, graphics: &mut Graphics) {
         if !self.input_state.is_cursor_locked {
             if let Some(window) = &self.window {
                 window.set_cursor_visible(true);
@@ -282,10 +353,13 @@ impl Scene for RuntimeScene {
         }
 
         for (entity_id, script_name) in script_entities {
-            if let Err(e) = self
-                .script_manager
-                .update_entity_script(entity_id, &script_name, &mut self.world, &self.input_state, dt)
-            {
+            if let Err(e) = self.script_manager.update_entity_script(
+                entity_id,
+                &script_name,
+                &mut self.world,
+                &self.input_state,
+                dt,
+            ) {
                 log::warn!(
                     "Failed to update script '{}' for entity {:?}: {}",
                     script_name,
@@ -301,10 +375,8 @@ impl Scene for RuntimeScene {
             .iter()
         {
             if let Some(target) = follow_target {
-                for (_target_entity_id, (adopted, transform)) in self
-                    .world
-                    .query::<(&AdoptedEntity, &Transform)>()
-                    .iter()
+                for (_target_entity_id, (adopted, transform)) in
+                    self.world.query::<(&AdoptedEntity, &Transform)>().iter()
                 {
                     if adopted.label() == &target.follow_target {
                         let target_pos = transform.position;
@@ -320,7 +392,7 @@ impl Scene for RuntimeScene {
             camera.update(graphics);
         }
 
-        let query = self.world.query_mut::<(&mut AdoptedEntity, &Transform)>();
+        let query = Arc::get_mut(&mut self.world).unwrap().query_mut::<(&mut AdoptedEntity, &Transform)>();
         for (_, (entity, transform)) in query {
             entity.update(graphics, transform);
         }
@@ -350,7 +422,10 @@ impl Scene for RuntimeScene {
                                 render_pass.set_pipeline(light_pipeline);
                                 for (_, (light, component)) in light_query.iter() {
                                     if component.enabled {
-                                        render_pass.set_vertex_buffer(1, light.instance_buffer.as_ref().unwrap().slice(..));
+                                        render_pass.set_vertex_buffer(
+                                            1,
+                                            light.instance_buffer.as_ref().unwrap().slice(..),
+                                        );
                                         render_pass.draw_light_model(
                                             light.model(),
                                             camera.bind_group(),
@@ -363,8 +438,15 @@ impl Scene for RuntimeScene {
                             render_pass.set_pipeline(pipeline);
 
                             for (_, (entity, _)) in entity_query.iter() {
-                                render_pass.set_vertex_buffer(1, entity.instance_buffer.as_ref().unwrap().slice(..));
-                                render_pass.draw_model(entity.model(), camera.bind_group(), self.light_manager.bind_group());
+                                render_pass.set_vertex_buffer(
+                                    1,
+                                    entity.instance_buffer.as_ref().unwrap().slice(..),
+                                );
+                                render_pass.draw_model(
+                                    entity.model(),
+                                    camera.bind_group(),
+                                    self.light_manager.bind_group(),
+                                );
                             }
                         }
                     }
@@ -392,12 +474,16 @@ impl Keyboard for RuntimeScene {
             }
             KeyCode::F1 => {
                 self.input_state.is_cursor_locked = !self.input_state.is_cursor_locked;
-                self.input_state.lock_cursor(self.input_state.is_cursor_locked);
+                self.input_state
+                    .lock_cursor(self.input_state.is_cursor_locked);
                 if let Some(window) = &self.window {
                     window.set_cursor_visible(!self.input_state.is_cursor_locked);
                     if self.input_state.is_cursor_locked {
                         let size = window.inner_size();
-                        let center = PhysicalPosition::new(size.width as f64 / 2.0, size.height as f64 / 2.0);
+                        let center = PhysicalPosition::new(
+                            size.width as f64 / 2.0,
+                            size.height as f64 / 2.0,
+                        );
                         let _ = window.set_cursor_position(center);
                     }
                 }
@@ -415,8 +501,7 @@ impl Keyboard for RuntimeScene {
 
 impl Mouse for RuntimeScene {
     fn mouse_move(&mut self, position: PhysicalPosition<f64>) {
-        if self.input_state.is_cursor_locked
-        {
+        if self.input_state.is_cursor_locked {
             if let Some(window) = &self.window {
                 let size = window.inner_size();
                 let center =
@@ -425,7 +510,10 @@ impl Mouse for RuntimeScene {
                 let dx = position.x - center.x;
                 let dy = position.y - center.y;
                 if let Some(active_camera) = self.active_camera {
-                    if let Ok(mut query) = self.world.query_one::<(&mut Camera, &CameraComponent)>(active_camera) {
+                    if let Ok(mut query) = self
+                        .world
+                        .query_one::<(&mut Camera, &CameraComponent)>(active_camera)
+                    {
                         if let Some((camera, _component)) = query.get() {
                             camera.track_mouse_delta(dx, dy);
                         }
