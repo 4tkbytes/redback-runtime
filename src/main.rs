@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 use bincode::error::DecodeError;
-use dropbear_engine::{camera::Camera, entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{Graphics, Shader}, input::{Controller, Keyboard, Mouse}, lighting::{Light, LightManager}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, WindowConfiguration};
+use dropbear_engine::{camera::Camera, entity::{AdoptedEntity, Transform}, gilrs::{Button, GamepadId}, graphics::{SharedGraphicsContext, Shader}, input::{Controller, Keyboard, Mouse}, lighting::{Light, LightManager}, scene::{Scene, SceneCommand}, wgpu::{Color, RenderPipeline}, WindowConfiguration};
 use winit::{dpi::PhysicalPosition, event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
 use dropbear_engine::lighting::LightComponent;
 use dropbear_engine::model::{DrawLight, DrawModel};
@@ -168,7 +168,7 @@ impl RuntimeScene {
         }
     }
 
-    fn load_scene(&mut self, graphics: &mut Graphics, scene_name: impl Into::<String>) -> anyhow::Result<()> {
+    fn load_scene(&mut self, graphics: &mut SharedGraphicsContext, scene_name: impl Into::<String>) -> anyhow::Result<()> {
         let scene_name: String = scene_name.into();
 
         self.world.clear();
@@ -222,7 +222,7 @@ fn setup_from_runtime_data(
 }
 
 impl Scene for RuntimeScene {
-    fn load(&mut self, graphics: &mut Graphics) {
+    fn load(&mut self, graphics: &mut SharedGraphicsContext) {
         if let Err(e) = self.load_scene(graphics, "Default") {
             log::error!("Failed to load scene 'Default': {}", e);
         }
@@ -269,7 +269,7 @@ impl Scene for RuntimeScene {
         self.window = Some(graphics.state.window.clone());
     }
     
-    fn update(&mut self, dt: f32, graphics: &mut Graphics) {
+    fn update(&mut self, dt: f32, graphics: &mut SharedGraphicsContext) {
         if !self.input_state.is_cursor_locked {
             if let Some(window) = &self.window {
                 window.set_cursor_visible(true);
@@ -328,7 +328,7 @@ impl Scene for RuntimeScene {
         self.input_state.mouse_delta = None;
     }
 
-    fn render(&mut self, graphics: &mut Graphics) {
+    fn render(&mut self, graphics: &mut SharedGraphicsContext) {
         // cornflower blue
         let color = Color {
             r: 100.0 / 255.0,
